@@ -23,7 +23,7 @@
 '''
 Artifical Neural Network Model
 
-Simple ANN model for SVHN Dataset
+ANN model for SVHN Dataset
 More info on github.com/pedrovbj/SVHN-ML
 '''
 
@@ -33,17 +33,23 @@ import numpy as np
 import tensorflow as tf
 import matplotlib.pyplot as plt
 from datetime import datetime
+from pathlib import Path
 
 # My modules
 from preproc import load_data, flatten
 from mylogger import MyLogger
 
-# Init logger
+# Paths
 prefix = 'ANN'
 timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-log_file = 'results/{}_out_{}.txt'.format(prefix, timestamp)
-print(log_file, end='\n')
-logger = MyLogger(log_file)
+results_path = Path('{}_results'.format(prefix))
+log_path = results_path / '{}_out_{}.txt'.format(prefix, timestamp)
+model_path = results_path / '{}_model_{}.ckpt'.format(prefix, timestamp)
+img_path = results_path / '{}_cross_entropy_{}.png'.format(prefix, timestamp)
+
+# Init logger
+print(log_path, end='\r\n')
+logger = MyLogger(log_path)
 
 ## Disable TF log
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -51,7 +57,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 ## Load data
 logger.debug('Loading data... ')
 t0 = datetime.now()
-Xtrain, Ytrain, Ytrain_ind, Xtest, Ytest, Ytest_ind = load_data()
+Xtrain, Ytrain, Xtest, Ytest = load_data()
 Xtrain = flatten(Xtrain)
 Xtest = flatten(Xtest)
 Xtrain = (Xtrain-Xtrain.mean())/Xtrain.std()
@@ -63,56 +69,69 @@ logger.debug('Done. [Elapsed {}]\r\n'.format(dt))
 logger.debug('Model fitting...\r\n')
 t0 = datetime.now()
 
-# logger.debug period for cost of test set and accuracy
-logger.debug_period = 50
+# printing period for cost of test set and accuracy
+print_period = 1
 
 # Number of samples to take from test set each time it computes cost
-n_samples = 5000
+# n_samples = 10000
 
 # Hyperparameters
-lr = 1e-6 # learning rate
+lr = 1e-4 # learning rate
 max_iter = 500 # maximum number of epochs
-n_batches = 100 # number of training batches
+n_batches = 4 # number of training batches
 batch_size = Xtrain.shape[0]//n_batches # training batch size
-D = Xtrain.shape[1] # input layer size
-M1 = 1000           # 1st dense layer size
-M2 = 500            # 2nd dense layer size
-K = 10              # output layer size
+D = Xtrain.shape[1]
+K = 10
+n_layers = 3
+layer_sizes = [D, *map(lambda k: D*(2**k)//(3**k)+K, range(1, n_layers)), K]
+
+def init_layer(k, layer_sizes):
+    M0 = layer_sizes[k-1]
+    M1 = layer_sizes[k]
+    return np.random.randn(M0, M1)*2/np.sqrt(M0+M1)
+def init_bias(k, layer_sizes):
+    return np.zeros(layer_sizes[k])
 
 # Weights and biases initialization
-W1_init = np.random.randn(D, M1) / np.sqrt(D+M1)
-b1_init = np.zeros(M1)
-W2_init = np.random.randn(M1, M2) / np.sqrt(M1+M2)
-b2_init = np.zeros(M2)
-W3_init = np.random.randn(M2, K) / np.sqrt(M2+K)
-b3_init = np.zeros(K)
+W_init = [init_layer(k, layer_sizes) for k in range(1, n_layers+1)]
+b_init = [init_bias(k, layer_sizes) for k in range(1, n_layers+1)]
 
 # Input and Output placeholders
-X = tf.placeholder(name='X', dtype=np.float32)
-T = tf.placeholder(name='T', dtype=np.float32)
+inputs = tf.placeholder(name='inputs', dtype=np.float32)
+labels = tf.placeholder(name='labels', dtype=np.int32)
 
 # TF Weights and Biases variables
-W1 = tf.Variable(W1_init.astype(np.float32))
-b1 = tf.Variable(b1_init.astype(np.float32))
-W2 = tf.Variable(W2_init.astype(np.float32))
-b2 = tf.Variable(b2_init.astype(np.float32))
-W3 = tf.Variable(W3_init.astype(np.float32))
-b3 = tf.Variable(b3_init.astype(np.float32))
+W = [tf.Variable(W_init[k], dtype=np.float32) for k in range(n_layers)]
+b = [tf.Variable(b_init[k], dtype=np.float32) for k in range(n_layers)]
 
 # Forwarding
-Z1 = tf.nn.relu(tf.matmul(X, W1)+b1)
-Z2 = tf.nn.relu(tf.matmul(Z1, W2)+b2)
-Yish = tf.matmul(Z2, W3)+b3
+def forward_train(X, dropout_rates):
+    Z = X
+    for k in range(n_layers-1):
+        Z = tf.nn.relu(tf.matmul(Z, W[k])+b[k])
+        Z = tf.nn.dropout(Z, dropout_rates[k])
+    return tf.matmul(Z, W[-1])+b[-1]
+
+def forward_test(X):
+    Z = X
+    for k in range(n_layers-1):
+        Z = tf.nn.relu(tf.matmul(Z, W[k])+b[k])
+    return tf.matmul(Z, W[-1])+b[-1]
+
+train_logits = forward_train(inputs, [0.5]*n_layers)
+test_logits = forward_test(inputs)
 
 # Cost function (cross entropy)
-cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2 \
-    (logits=Yish, labels=T))
+train_cost = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits \
+    (logits=train_logits, labels=labels))
+test_cost =  tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits \
+    (logits=test_logits, labels=labels))
 
 # Train operation
-train_op = tf.train.AdamOptimizer(lr).minimize(cost)
+train_op = tf.train.AdamOptimizer(lr).minimize(train_cost)
 
 # Prediction operation
-predict_op = tf.argmax(Yish, 1)
+predict_op = tf.argmax(forward_test(inputs), 1)
 
 # Add operation to save session
 saver = tf.train.Saver()
@@ -126,30 +145,33 @@ with tf.Session() as session:
         for j in range(1, n_batches+1):
             # Select batch
             Xb = Xtrain[j*batch_size:(j+1)*batch_size,]
-            Tb = Ytrain_ind[j*batch_size:(j+1)*batch_size,]
+            Tb = Ytrain[j*batch_size:(j+1)*batch_size,]
 
             # Training
-            session.run(train_op, feed_dict={X: Xb, T: Tb})
+            session.run(train_op, feed_dict={inputs: Xb, labels: Tb})
 
-            # Cost logger.debuging
-            if j % logger.debug_period == 0:
-                idx_samples = np.random.choice(Xtest.shape[0], n_samples, \
-                    replace=False)
-                test_cost = session.run(cost, \
-                    feed_dict={X: Xtest[idx_samples],T: Ytest_ind[idx_samples]})
+            # Cost printing
+            if j % print_period == 0:
+                #idx_samples = np.random.choice(Xtest.shape[0], n_samples, \
+                #    replace=False)
+                #Xs = Xtest[idx_samples]
+                #Ys = Ytest[idx_samples]
+                Xs = Xtest
+                Ys = Ytest
+                tc = session.run(test_cost, \
+                    feed_dict={inputs: Xs, labels: Ys})
                 Ypred = session.run(predict_op, \
-                    feed_dict={X: Xtest[idx_samples],T: Ytest_ind[idx_samples]})
-                acc = 100*np.mean(Ypred == Ytest[idx_samples])
+                    feed_dict={inputs: Xs, labels: Ys})
+                acc = 100*np.mean(Ypred == Ys)
                 dt = datetime.now()-t0
                 est_t = (max_iter*n_batches)*dt/(i*n_batches+j)
                 logger.debug('E: {:03d}/{} B: {:03d}/{} C: {:.6f} A: {:.2f}% [Elapsed {} of ~ {}]\r\n'\
-                    .format(i, max_iter, j, n_batches, test_cost, acc, dt, est_t))
-                costs.append(test_cost)
+                    .format(i, max_iter, j, n_batches, tc, acc, dt, est_t))
+                costs.append(tc)
 
     # Save session
-    save_path = saver.save(session, 'results/{}_model_{}.ckpt' \
-        .format(prefix, timestamp))
-    logger.debug('Model saved in path: {}'.format(save_path))
+    saver.save(session, str(model_path))
+    logger.debug('Model saved in path: {}\r\n'.format(model_path))
 
 dt = datetime.now()-t0
 logger.debug('Done. [Elapsed {}]\r\n'.format(dt))
@@ -158,10 +180,10 @@ logger.debug('Done. [Elapsed {}]\r\n'.format(dt))
 logger.shutdown()
 
 ## Plots cross entropy and saves it to disk
-plt.plot(logger.debug_period*np.arange(1, len(costs)+1), costs, marker='x')
-plt.title('[{}] Cross entropy for {} samples from test set\nat every {} weight updates'\
-    .format(prefix, n_samples, logger.debug_period))
+plt.plot(print_period*np.arange(1, len(costs)+1), costs, marker='x')
+plt.title('[{}] Cross entropy for test set\nat every {} weight updates'\
+    .format(prefix, print_period))
 plt.xlabel('Number of weight updates')
 plt.ylabel('Cross entropy')
-plt.savefig('results/{}_cross_entropy_{}.png'.format(prefix, timestamp))
+plt.savefig(img_path)
 plt.show()

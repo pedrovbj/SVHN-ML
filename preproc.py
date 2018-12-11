@@ -82,13 +82,11 @@ def load_data():
     '''
     Xtrain = np.load(path+'Xtrain.npy')
     Ytrain = np.load(path+'Ytrain.npy')
-    Ytrain_ind = np.load(path+'Ytrain_ind.npy')
 
     Xtest = np.load(path+'Xtest.npy')
     Ytest = np.load(path+'Ytest.npy')
-    Ytest_ind = np.load(path+'Ytest_ind.npy')
 
-    return Xtrain, Ytrain, Ytrain_ind, Xtest, Ytest, Ytest_ind
+    return Xtrain, Ytrain, Xtest, Ytest
 
 if __name__ == "__main__":
     train = loadmat(path+'train_32x32.mat')
@@ -98,17 +96,13 @@ if __name__ == "__main__":
     Ytrain = train['y'].flatten()-1
     del train
     Xtrain, Ytrain = shuffle(Xtrain, Ytrain)
-    Ytrain_ind = y2indicator(Ytrain)
 
     Xtest = rearrange(test['X'])
     Ytest = test['y'].flatten()-1
-    Xtest, Ytest = shuffle(Xtest, Ytest)
     del test
-    Ytest_ind = y2indicator(Ytest)
+    Xtest, Ytest = shuffle(Xtest, Ytest)
 
     np.save(path+'Xtrain', Xtrain)
     np.save(path+'Ytrain', Ytrain)
-    np.save(path+'Ytrain_ind', Ytrain_ind)
     np.save(path+'Xtest', Xtest)
     np.save(path+'Ytest', Ytest)
-    np.save(path+'Ytest_ind', Ytest_ind)

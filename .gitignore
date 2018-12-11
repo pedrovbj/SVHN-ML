@@ -102,3 +102,10 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# User added
+.ckpt
+.ckpt.meta
+.ckpt.index
+.ckpt.data*
+checkpoint
